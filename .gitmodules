@@ -1,0 +1,3 @@
+[submodule "foundry/lib/yield-daddy"]
+	path = foundry/lib/yield-daddy
+	url = https://github.com/timeless-fi/yield-daddy
