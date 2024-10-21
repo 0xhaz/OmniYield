@@ -7,6 +7,6 @@ interface IYieldOracle {
     function consult(uint256 forInterval) external returns (uint256 amountOut);
 
     // accumulates/updates internal state and returns cumulatives
-    // oracle should call this when updating
+    // oracle should call this when updating.
     function cumulatives() external returns (uint256 cumulativeYield);
 }
