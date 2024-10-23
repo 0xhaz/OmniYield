@@ -22,7 +22,7 @@ abstract contract IController is Governed {
     address public feesOwner;
 
     /**
-     * max accepted cost of harvest when converting COMP to underlying
+     * max accepted cost of harvest when converting COMP to underlying.
      * if havest gets less than (COMP to underlying at spot price) - HARVEST_COST, then skip harvest
      * if it gets more, the difference goes to the harvest caller
      */

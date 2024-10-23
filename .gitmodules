@@ -1,3 +1,6 @@
 [submodule "foundry/lib/yield-daddy"]
 	path = foundry/lib/yield-daddy
 	url = https://github.com/timeless-fi/yield-daddy
+[submodule "lib/ethereum-vault-connector"]
+	path = lib/ethereum-vault-connector
+	url = https://github.com/euler-xyz/ethereum-vault-connector
