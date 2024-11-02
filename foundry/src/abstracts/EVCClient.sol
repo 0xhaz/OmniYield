@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.26;
 
-import {EVCUtil, IEVC} from "evc/utils/EVCUtil.sol";
+import {EVCUtil, IEVC} from "evc/src/utils/EVCUtil.sol";
 
 /**
  * @title EVCClient

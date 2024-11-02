@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.26;
 
-import {IVault} from "evc/interfaces/IVault.sol";
+import {IVault} from "evc/src/interfaces/IVault.sol";
 import {EVCClient, IEVC} from "./EVCClient.sol";
 
 /**
@@ -15,10 +15,13 @@ abstract contract VaultBase is IVault, EVCClient {
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
     error VaultBase__ReentrancyGuard();
+    error VaultBase__AlreadyInitialized();
 
     /*//////////////////////////////////////////////////////////////
                               GLOBAL STATE
     //////////////////////////////////////////////////////////////*/
+
+    IEVC internal _evc;
 
     uint256 private constant REENTRANCY_UNLOCKED = 1;
     uint256 private constant REENTRANCY_LOCKED = 2;
@@ -31,6 +34,7 @@ abstract contract VaultBase is IVault, EVCClient {
     //////////////////////////////////////////////////////////////*/
     constructor(IEVC evc_) EVCClient(evc_) {
         reentrancyLock = REENTRANCY_UNLOCKED;
+        _evc = evc_;
     }
 
     /*//////////////////////////////////////////////////////////////
