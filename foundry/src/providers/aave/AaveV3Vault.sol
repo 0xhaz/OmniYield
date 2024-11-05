@@ -13,7 +13,7 @@ import {Ownable, Context} from "@openzeppelin/contracts/access/Ownable.sol";
  * @title AaveV3Vault
  * @dev This contract is the Aave V3 Vault using EVC as the controller
  */
-contract AaveV3Vault is VaultBase, AaveV3ERC4626, Ownable {
+contract AaveV3Vault is AaveV3ERC4626, Ownable {
     using Math for uint256;
     /*//////////////////////////////////////////////////////////////
                               ERRORS
@@ -36,36 +36,15 @@ contract AaveV3Vault is VaultBase, AaveV3ERC4626, Ownable {
         IPool lendingPool_,
         address rewardsRecipient_,
         IRewardsController rewardsController_
-    )
-        VaultBase(evc_)
-        AaveV3ERC4626(asset_, aToken_, lendingPool_, rewardsRecipient_, rewardsController_)
-        Ownable(msg.sender)
-    {}
+    ) AaveV3ERC4626(asset_, aToken_, lendingPool_, rewardsRecipient_, rewardsController_) Ownable(msg.sender) {}
 
     /*//////////////////////////////////////////////////////////////
                            PUBLIC FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-    function deposit(uint256 assets, address receiver)
-        public
-        override
-        callThroughEVC
-        nonReentrant
-        returns (uint256 shares)
-    {
+    function deposit(uint256 assets, address receiver) public override returns (uint256 shares) {
         address msgSender = _msgSender();
 
-        createVaultSnapshot();
-
-        // check for rounding error since we round down in previewDeposit
-        if ((shares = convertToShares(assets)) == 0) revert AaveV3Vault__ZeroShares();
-
         super.deposit(assets, receiver);
-
-        _mint(receiver, shares);
-
-        emit Deposit(msgSender, receiver, assets, shares);
-
-        requireVaultStatusCheck();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -75,15 +54,4 @@ contract AaveV3Vault is VaultBase, AaveV3ERC4626, Ownable {
     /*//////////////////////////////////////////////////////////////
                            OVERRIDE FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-    function _msgSender() internal view override(EVCUtil, Context) returns (address) {
-        return EVCUtil._msgSender();
-    }
-
-    function disableController() external override {}
-
-    function doCreateVaultSnapshot() internal virtual override returns (bytes memory snapshot) {}
-
-    function doCheckVaultStatus(bytes memory snapshot) internal virtual override {}
-
-    function doCheckAccountStatus(address owner, address[] calldata) internal view virtual override {}
 }

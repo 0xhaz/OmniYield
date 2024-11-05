@@ -62,6 +62,12 @@ abstract contract VaultBase is IVault, EVCClient {
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice Initializes the vault
+    /// @dev Must be called by the proxy contract
+    function initialize(IEVC evc_) external {
+        _evc = evc_;
+    }
+
     /// @notice Checks the vault status
     /// @dev Executed as a result of requiring vault status check on the EVC
     function checkVaultStatus() external onlyEVCWithChecksInProgress returns (bytes4 magicValue) {
