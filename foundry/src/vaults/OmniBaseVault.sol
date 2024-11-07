@@ -29,7 +29,7 @@ contract OmniBaseVault is VaultBase, ERC4626, Ownable {
     uint256 internal _totalAssets;
     uint256 public supplyCap;
 
-    /*//////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////åç
                             CONSTRUCTORS
     //////////////////////////////////////////////////////////////*/
     constructor(IEVC _evc, IERC20 _asset, string memory _name, string memory _symbol)
