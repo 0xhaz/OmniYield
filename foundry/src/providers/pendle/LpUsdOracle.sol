@@ -5,7 +5,7 @@ import {IPPYLpOracle} from "@pendle/core/contracts/interfaces/IPPYLpOracle.sol";
 import {IPMarket} from "@pendle/core/contracts/interfaces/IPMarket.sol";
 import {PMath} from "@pendle/core/contracts/core/libraries/math/PMath.sol";
 import {PendleLpOracleLib} from "@pendle/core/contracts/oracles/PendleLpOracleLib.sol";
-import {IPtUsdOracle} from "src/interfaces/oracle/IPtUsdOracle.sol";
+import {ILpUsdOracle} from "src/interfaces/oracle/ILpUsdOracle.sol";
 
 import {AggregatorV2V3Interface as IChainlinkAggregator} from
     "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol";

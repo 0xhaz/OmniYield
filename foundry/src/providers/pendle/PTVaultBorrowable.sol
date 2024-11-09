@@ -9,9 +9,9 @@ import {IPPrincipalToken} from "@pendle/core/contracts/interfaces/IPPrincipalTok
 import {IPMarketV3} from "@pendle/core/contracts/interfaces/IPMarketV3.sol";
 import {PYIndexLib} from "@pendle/core/contracts/core/StandardizedYield/PYIndex.sol";
 import {LpUsdOracle} from "src/providers/pendle/LpUsdOracle.sol";
-import {PendlePtOracleLib} from "@pendle/core/contracts/oracles/PendleLpOracleLib.sol";
+import {PendleLpOracleLib} from "@pendle/core/contracts/oracles/PendleLpOracleLib.sol";
 import {IOmniYieldCollateralVault} from "src/interfaces/IOmniYieldCollateralVault.sol";
-import {IERC20, ERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20, ERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {MarketApproxPtOutLib, ApproxParams} from "@pendle/core/contracts/router/base/ActionBase.sol";
 
@@ -29,6 +29,7 @@ contract PTVaultBorrowable is OmniBaseVault {
     error PTVaultBorrowable__LiquidationImpaired();
     error PTVaultBorrowable__SlippageTooHigh();
     error PTVaultBorrowable__LoanTermNotExpired();
+    error PTVaultBorrowable__SnapshotNotTaken();
     error PTVaultBorrowable__InvalidCollateralFactor();
     error PTVaultBorrowable__NotEnoughCollateralPledged();
     error PTVaultBorrowable__ViolatorStatusCheckDeferred();
@@ -36,7 +37,7 @@ contract PTVaultBorrowable is OmniBaseVault {
 
     using Math for uint256;
     using MarketApproxPtOutLib for *;
-    using PendlePtOracleLib for IPMarketV3;
+    using PendleLpOracleLib for IPMarketV3;
     using PYIndexLib for IPYieldToken;
 
     mapping(address owner => uint256 owedAmount) private _owed;
@@ -57,6 +58,7 @@ contract PTVaultBorrowable is OmniBaseVault {
     IPPrincipalToken public collateral;
     IOmniYieldCollateralVault public collateralVault;
     address public market;
+    bytes internal constant EMPTY_BYTES = abi.encode();
 
     event Borrow(address indexed borrower, address indexed receiver, uint256 assets);
     event Repay(address indexed borrower, address indexed receiver, uint256 assets);
@@ -155,7 +157,7 @@ contract PTVaultBorrowable is OmniBaseVault {
         uint256 markPrice = oracle.getLpPrice();
         uint256 lpMarketValue = markPrice * _LPAmount / FACTOR_SCALE;
 
-        uint256 netLpOut = swapExactTokenForLp(lpMarketValue, _PTAmount, _mintLpOut, asset());
+        uint256 netLpOut = swapExactTokenForLp(lpMarketValue, _LPAmount, _mintLpOut, asset());
 
         // the maximum loan value for the collateral purchased
         uint256 maxLoan = maxLoanValue(netLpOut * markPrice / FACTOR_SCALE);
@@ -218,6 +220,77 @@ contract PTVaultBorrowable is OmniBaseVault {
         requireAccountAndVaultStatusCheck(msgSender);
     }
 
+    function liquidate(address _borrower, uint256 _loanIndex) external callThroughEVC nonReentrant {
+        address msgSender = _msgSenderForBorrow();
+
+        UserInfo storage info = userInfo[_borrower][_loanIndex];
+        if (info.termExpires > block.timestamp) revert PTVaultBorrowable__LoanTermNotExpired();
+
+        // due to later violator's account check forgiveness,
+        // the violator's account must be fully settled when liquidating
+        if (isAccountStatusCheckDeferred(_borrower)) revert PTVaultBorrowable__ViolatorStatusCheckDeferred();
+
+        // sanity check: the violator must be under control of the EVC
+        if (!isControllerEnabled(_borrower, address(this))) revert PTVaultBorrowable__ControllerDisabled();
+
+        createVaultSnapshot();
+
+        // liquidator pays off the loan
+        SafeERC20.safeTransferFrom(ERC20(asset()), msgSender, address(this), info.repurchasePrice);
+
+        // PT collateral shares transferred to the liquidator
+        liquidateCollateralShares(address(collateralVault), _borrower, msgSender, info.collateralAmount);
+        forgiveAccountStatusCheck(_borrower);
+
+        _totalPledgedCollateral -= info.collateralAmount;
+        _totalAssets += info.repurchasePrice;
+        pledgedCollateral[_borrower] -= info.collateralAmount;
+        _decreaseOwed(_borrower, info.repurchasePrice);
+        loans[_borrower] -= 1;
+
+        delete userInfo[_borrower][_loanIndex];
+
+        requireAccountAndVaultStatusCheck(msgSender);
+    }
+
+    /// @notice Returns the current rate for borrowing
+    function getRate(uint256 _amountBorrowed, uint256 totalAssets, uint256 totalBorrowed)
+        public
+        view
+        returns (uint256)
+    {
+        if (totalAssets == 0) return 677; // 6.77 basis points (0.0677%)
+        uint256 utilization1 = totalBorrowed * FACTOR_SCALE / totalAssets + totalBorrowed;
+        uint256 utilization2 = (_amountBorrowed + totalBorrowed) * FACTOR_SCALE / (totalAssets - totalBorrowed);
+        if (utilization2 < 0.8 ether) {
+            return (((20 * utilization1 / 100 ether) + 677) + ((20 * utilization2 / 100 ether) + 677)) / 2;
+        } else {
+            uint256 amountBelow = ((0.8 ether * (totalAssets + totalBorrowed)) - totalBorrowed) / FACTOR_SCALE;
+            uint256 amountAbove = _amountBorrowed - amountBelow;
+            uint256 rateBelow = (20 * utilization1 / 100 ether) + 677;
+            uint256 rateAbove = (20 * utilization2 / 100 ether) + 677;
+            return (rateBelow * amountBelow + rateAbove * amountAbove) / _amountBorrowed;
+        }
+    }
+
+    function getTermFeeForAmount(uint256 _amount, uint256 _term) public view returns (uint256) {
+        return _amount * ((getRate(_amount, _totalAssets, _totalBorrowed) * _term)) / (RATE_PRECISION * 1 days);
+    }
+
+    function maxLoanValue(uint256 _collateralValue) public view returns (uint256) {
+        return _collateralValue * LTV / RATE_PRECISION;
+    }
+
+    function getMaxBorrow(uint256 _collateralValue, uint256 _term) public view returns (uint256) {
+        return maxLoanValue(_collateralValue)
+            * ((1 days * RATE_PRECISION) - (getRate(maxLoanValue(_collateralValue), _totalAssets, _totalBorrowed) * _term))
+            / (RATE_PRECISION * 1 days);
+    }
+
+    function getTermFee(uint256 _collateralValue, uint256 _term) public view returns (uint256) {
+        return maxLoanValue(_collateralValue) - getMaxBorrow(_collateralValue, _term);
+    }
+
     function swapExactTokenForLp(uint256 netTokenIn, uint256 _LpAmount, uint256 _mintLpOut, address tokenIn)
         internal
         returns (uint256 netLpOut)
@@ -230,8 +303,120 @@ contract PTVaultBorrowable is OmniBaseVault {
         (netLpOut,) = _SwapExactSyForPt(address(this), netSyOut, _LpAmount, _mintLpOut);
     }
 
-    function getUserLoan(address user, uint256 loanIndex) external view returns (uint256 collateral, uint256 term) {
+    function repurchase(address receiver, uint256 _loanIndex) external callThroughEVC nonReentrant {
+        address msgSender = _msgSenderForBorrow();
+
+        if (!isControllerEnabled(receiver, address(this))) revert PTVaultBorrowable__ControllerDisabled();
+
+        UserInfo storage info = userInfo[receiver][_loanIndex];
+
+        createVaultSnapshot();
+        SafeERC20.safeTransferFrom(IERC20(asset()), msgSender, address(this), info.repurchasePrice);
+
+        _totalAssets += info.repurchasePrice;
+        _totalPledgedCollateral -= info.collateralAmount;
+        pledgedCollateral[msgSender] -= info.collateralAmount;
+
+        _decreaseOwed(receiver, info.repurchasePrice);
+
+        delete userInfo[receiver][_loanIndex];
+        loans[receiver] -= 1;
+
+        emit Repay(msgSender, receiver, info.repurchasePrice);
+        requireAccountAndVaultStatusCheck(msgSender);
+    }
+
+    function _sellPtForToken(uint256 netPtIn, address tokenOut) internal returns (uint256 netTokenOut) {
+        (IStandardizedYield SY, IPPrincipalToken PT, IPYieldToken YT) = IPMarketV3(market).readTokens();
+
+        uint256 netSyOut;
+        uint256 fee;
+        if (PT.isExpired()) {
+            PT.transfer(address(YT), netPtIn);
+            netSyOut = YT.redeemPY(address(SY));
+        } else {
+            PT.transfer(address(market), netPtIn);
+            (netSyOut, fee) = IPMarketV3(market).swapExactPtForSy(
+                address(SY), // better gas optimization to transfer SY directly to itself and burn
+                netPtIn,
+                EMPTY_BYTES
+            );
+        }
+
+        netTokenOut = SY.redeem(address(this), netSyOut, tokenOut, MIN_SHARES_AMOUNT, true);
+    }
+
+    function doCreateVaultSnapshot() internal virtual override returns (bytes memory) {
+        return abi.encode(_totalAssets, _totalBorrowed, _totalPledgedCollateral);
+    }
+
+    function _executeLoan(address debtor, uint256 collateralPledged, uint256 loanAmount, uint256 term) internal {
+        _increasedOwed(debtor, loanAmount);
+
+        pledgedCollateral[debtor] += collateralPledged;
+        loans[debtor] += 1;
+
+        userInfo[debtor][loans[debtor]] = UserInfo(collateralPledged, loanAmount, block.timestamp + term);
+        _totalPledgedCollateral += collateralPledged;
+    }
+
+    function doCheckVaultStatus(bytes memory oldSnapshot) internal virtual override {
+        if (oldSnapshot.length == 0) revert PTVaultBorrowable__SnapshotNotTaken();
+
+        (uint256 initialAssets, uint256 initialBorrowed, uint256 initialPledged) =
+            abi.decode(oldSnapshot, (uint256, uint256, uint256));
+        uint256 finalAssets = _totalAssets;
+        uint256 finalBorrowed = _totalBorrowed;
+        uint256 finalPledged = _totalPledgedCollateral;
+        if (finalBorrowed > finalPledged) revert PTVaultBorrowable__NotEnoughCollateralPledged();
+    }
+
+    function setEps(uint256 _eps) external onlyOwner {
+        MARKET_EPS = _eps;
+    }
+
+    function doCheckAccountStatus(address account, address[] calldata collaterals) internal view virtual override {
+        uint256 _collateral = IERC20(collateral).balanceOf(account);
+        uint256 maxLoan = maxLoanValue(collateral * oracle.getLpPrice() / FACTOR_SCALE);
+
+        if (maxLoan < _owed[account]) revert PTVaultBorrowable__MaxLoanExceeded();
+        if (_collateral < pledgedCollateral[account]) revert PTVaultBorrowable__LiquidationImpaired();
+    }
+
+    function _decreaseOwed(address account, uint256 assets) internal virtual {
+        _owed[account] = _debtOf(account) - assets;
+        _totalBorrowed -= assets;
+    }
+
+    function _increaseOwed(address account, uint256 assets) internal virtual {
+        _owed[account] = _debtOf(account) + assets;
+        _totalBorrowed += assets;
+    }
+
+    function _debtOf(address account) internal view virtual returns (uint256) {
+        return _owed[account];
+    }
+
+    function getUserLoan(address user, uint256 loanIndex) external view returns (uint256 _collateral, uint256 term) {
         UserInfo memory info = userInfo[user][loanIndex];
         return (info.collateralAmount, info.repurchasePrice, info.termExpires);
+    }
+
+    // ===========================
+    /// @notice Converts assets to shares.
+    /// @dev That function is manipulable in its current form as it uses exact values. Considering that other vaults may
+    /// rely on it, for a production vault, a manipulation resistant mechanism should be implemented.
+    /// @dev Considering that this function may be relied on by controller vaults, it's read-only re-entrancy protected.
+    /// @param assets The assets to convert.
+    /// @return The converted shares.
+    function _convertToShares(uint256 assets, Math.Rounding rounding)
+        internal
+        view
+        virtual
+        override
+        returns (uint256)
+    {
+        uint256 underlyingValue = totalAssets() + _totalBorrowed;
+        return assets.mulDiv(totalSupply() + 10 ** _decimalsOffset(), underlyingValue + 1, rounding);
     }
 }
