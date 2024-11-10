@@ -36,6 +36,25 @@ abstract contract EVCClient is EVCUtil {
     }
 
     /**
+     * @notice Retrieves the controllers enabled for an account
+     * @param account The address of the account
+     * @return An array of addresses that are enabled controllers for the account
+     */
+    function getControllers(address account) internal view returns (address[] memory) {
+        return evc.getControllers(account);
+    }
+
+    /**
+     * @notice Checks whether a vault is enabled as a controller for an account
+     * @param account The address of the account
+     * @param vault The address of the vault
+     * @return A boolean value that indicates whether the vault is an enabled controller for the account
+     */
+    function isControllerEnabled(address account, address vault) internal view returns (bool) {
+        return evc.isControllerEnabled(account, vault);
+    }
+
+    /**
      * @notice Disables the controller for an account
      * @dev A controller is a vault that has been chosen for an account to have special control over account's balances in the enabled collaterals vaults.
      * Only the vault itself can call this function.

@@ -4,8 +4,8 @@ pragma solidity ^0.8.26;
 import {IPPYLpOracle} from "@pendle/core/contracts/interfaces/IPPYLpOracle.sol";
 import {IPMarket} from "@pendle/core/contracts/interfaces/IPMarket.sol";
 import {PMath} from "@pendle/core/contracts/core/libraries/math/PMath.sol";
-import {PendleLpOracleLib} from "@pendle/core/contracts/oracles/PendleLpOracleLib.sol";
-import {ILpUsdOracle} from "src/interfaces/oracle/ILpUsdOracle.sol";
+import {PendlePYOracleLib} from "@pendle/core/contracts/oracles/PendlePYOracleLib.sol";
+import {IPtUsdOracle} from "src/interfaces/oracle/IPtUsdOracle.sol";
 
 import {AggregatorV2V3Interface as IChainlinkAggregator} from
     "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol";
@@ -15,11 +15,11 @@ import {AggregatorV2V3Interface as IChainlinkAggregator} from
  * @notice The returned price from this contract is multiplied by the default USD price of the asset, as read from Chainlink Oracles
  * For more details into how the oracle is implemented, refer to PendlePtOracle and PendlePtOracleLib
  */
-contract LpUsdOracle is IPPYLpOracle {
+contract PtUsdOracle is IPPYLpOracle {
     error IncreaseCardinalityRequired(uint16 cardinalityRequired); // Revert with this error if it's required to increase the cardinality
     error AdditionalWaitRequired(uint32 twapDuration); // Revert with this error if it's required to wait for additional time
 
-    using PendleLpOracleLib for IPMarket;
+    using PendlePYOracleLib for IPMarket;
 
     uint32 public immutable twapPeriod;
     address public immutable market_;
@@ -41,12 +41,12 @@ contract LpUsdOracle is IPPYLpOracle {
      * @notice direct integration with PendleOracleLib, which optimizes gas efficiency
      * @return price The price of the LP token in USD
      */
-    function getLpPrice() external view virtual returns (uint256) {
-        return IPMarket(market_).getLpToAssetRate(twapPeriod);
+    function getPtPrice() external view virtual returns (uint256) {
+        return IPMarket(market_).getPtToAssetRate(twapPeriod);
     }
 
-    function getLpPriceSample1() external view virtual returns (uint256) {
-        uint256 lpRate = IPMarket(market_).getLpToAssetRate(twapPeriod);
+    function getPtPriceSample1() external view virtual returns (uint256) {
+        uint256 lpRate = IPMarket(market_).getPtToAssetRate(twapPeriod);
         uint256 assetPrice = _getUnderlyingAssetPrice();
         return (assetPrice * lpRate) / PMath.ONE;
     }
@@ -56,8 +56,8 @@ contract LpUsdOracle is IPPYLpOracle {
      * but slightly higher gas cost ( ~ 4000 gas, 2 external calls & 1 cold code load)
      * @notice please check checkOracleState() before use
      */
-    function getLpPriceSample2() external view virtual returns (uint256) {
-        uint256 ptRate = IPPYLpOracle(ptOracle).getLpToAssetRate(market_, twapPeriod);
+    function getPtPriceSample2() external view virtual returns (uint256) {
+        uint256 ptRate = IPPYLpOracle(ptOracle).getPtToAssetRate(market_, twapPeriod);
         uint256 assetPrice = _getUnderlyingAssetPrice();
         return (assetPrice * ptRate) / PMath.ONE;
     }
