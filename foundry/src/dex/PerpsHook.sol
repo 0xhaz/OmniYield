@@ -102,6 +102,7 @@ contract PerpsHook is BaseHook, ERC6909 {
         uint256 entryPrice; // price at which the position was entered
         uint256 leverage; // leverage used for this position
         bool isLong; // true if the position is long, false if short
+        IERC20 collateralToken; // token used as collateral
     }
 
     struct PositionInfo {
@@ -289,7 +290,8 @@ contract PerpsHook is BaseHook, ERC6909 {
             collateral: margin,
             entryPrice: getPrice(key),
             leverage: leverage,
-            isLong: isLong
+            isLong: isLong,
+            collateralToken: IERC20(token)
         });
 
         leveragePositionById[positionId] = position;
@@ -466,7 +468,7 @@ contract PerpsHook is BaseHook, ERC6909 {
         uint256 collateralSeized = position.collateral.mulDiv(SCALE_FACTOR - liquidationPenalty, SCALE_FACTOR);
 
         // Transfer the seized collateral to the liquidator
-        sUSDeToken.transfer(msg.sender, collateralSeized);
+        position.collateralToken.transfer(msg.sender, collateralSeized);
 
         // Emit liquidation event
         emit PositionLiquidated(positionId, collateralSeized, msg.sender);
@@ -474,6 +476,53 @@ contract PerpsHook is BaseHook, ERC6909 {
         // Remove the position from the open interest
         delete leveragePositionById[positionId];
         delete positionInfoById[positionId];
+    }
+
+    /**
+     * @notice Increases the collateral and leverage of an existing position
+     * @param positionId The ID of the position to increase
+     * @param additionalCollateral The amount of additional collateral to add to the position
+     * @param newLeverage The new leverage to apply to the position
+     * @dev Collateral is transferred from the caller to the position
+     */
+    function increasePosition(uint256 positionId, uint256 additionalCollateral, uint256 newLeverage) external {
+        if (newLeverage >= maxLeverage) revert PerpsHook__ExceedMaxLeverage();
+
+        LeveragePosition storage position = leveragePositionById[positionId];
+        if (position.positionSize == 0) revert PerpsHook__PositionNotFound(positionId);
+
+        // Transfer the additional collateral to the position
+        position.collateralToken.transferFrom(msg.sender, address(this), additionalCollateral);
+        position.collateral += additionalCollateral;
+        position.leverage = newLeverage;
+        position.positionSize = position.collateral * position.leverage;
+
+        emit PositionIncreased(positionId, additionalCollateral, newLeverage);
+    }
+
+    /**
+     * @notice Decreases the collateral and leverage of an existing position
+     * @param positionId The ID of the position to decrease
+     * @param collateralWithdrawn The amount of collateral to withdraw from the position
+     * @param newLeverage The new leverage to apply to the position
+     * @dev Collateral is transferred from the position to the caller
+     */
+    function decreasePosition(uint256 positionId, uint256 collateralWithdrawn, uint256 newLeverage) external {
+        if (newLeverage >= maxLeverage) revert PerpsHook__ExceedMaxLeverage();
+
+        LeveragePosition storage position = leveragePositionById[positionId];
+        if (position.positionSize == 0) revert PerpsHook__PositionNotFound(positionId);
+        if (position.collateral < collateralWithdrawn) revert PerpsHook__InsufficientBalance();
+
+        // Adjust collateral and transfer the withdrawn amount to the caller
+        position.collateral -= collateralWithdrawn;
+        position.collateralToken.transfer(msg.sender, collateralWithdrawn);
+
+        // Update leverage and position size
+        position.leverage = newLeverage;
+        position.positionSize = position.collateral * position.leverage;
+
+        emit PositionDecreased(positionId, collateralWithdrawn, newLeverage);
     }
 
     function setTickLowerLast(PoolId id, int24 tickLower) private {
