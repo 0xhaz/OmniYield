@@ -99,6 +99,8 @@ contract SrcPool is OApp, OAppOptionsType3 {
             revert SrcPool__TransferFailed();
         }
 
+        // Clear the user's loan record and update the pool balance
+        poolMetadata.poolBalance += totalRepayment;
         delete loans[msg.sender];
 
         bytes memory payload = abi.encode(msg.sender);
@@ -139,17 +141,22 @@ contract SrcPool is OApp, OAppOptionsType3 {
         address, /*_executor */
         bytes calldata /*_extraData */
     ) internal override {
+        // Decode payload from DestPool to get borrower and collateral info
         (address borrower, uint256 collateral) = abi.decode(payload, (address, uint256));
 
+        // Calculate the loan amount using the given collateral
         uint256 loanAmount = getLoanAmount(collateral);
 
+        // Verfify if the pool has enough balance to lend the loan amount
         if (poolMetadata.poolBalance <= loanAmount) {
             revert SrcPool__InsufficientPoolTokenBalance();
         }
 
+        // Record the loan details
         loans[borrower] =
             Loan({amount: loanAmount, collateral: collateral, startTime: block.timestamp, borrower: borrower});
 
+        // Update the pool balance and send loan amount to borrower
         poolMetadata.poolBalance -= loanAmount;
 
         IERC20(poolMetadata.poolToken).approve(address(this), loanAmount);

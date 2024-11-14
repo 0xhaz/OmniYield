@@ -35,6 +35,26 @@ contract DestPool is OApp, OAppOptionsType3 {
         totalFee.lzTokenFee += fee.lzTokenFee;
     }
 
+    /**
+     * @notice Allows a user to deposit collateral on the destination chain
+     * This collateral will be used for loans on the source chain
+     */
+    function depositCollateral(uint256 _collateralAmount, bytes calldata _extraSendOptions)
+        external
+        payable
+        returns (MessagingReceipt memory receipt)
+    {
+        IERC20(collateralToken).transferFrom(msg.sender, address(this), _collateralAmount);
+        depositedCollateral[msg.sender] += _collateralAmount;
+
+        // Prepare payload with collateral information
+        bytes memory payload = abi.encode(msg.sender, _collateralAmount);
+        bytes memory options = combineOptions(destChainId, SEND, _extraSendOptions);
+        MessagingFee memory fee = _quote(destChainId, payload, options, false);
+
+        receipt = _lzSend(destChainId, payload, options, fee, payable(msg.sender));
+    }
+
     /// @dev requires approval from user
     function takeLoan(uint256 _collateralAmount, bytes calldata _extraSendOptions)
         external
@@ -43,10 +63,16 @@ contract DestPool is OApp, OAppOptionsType3 {
     {
         IERC20(collateralToken).transferFrom(msg.sender, address(this), _collateralAmount);
 
-        bytes memory options = combineOptions(destChainId, SEND, _extraSendOptions);
+        // Store collateral for borrower
+        depositedCollateral[msg.sender] += _collateralAmount;
 
+        // Prepare payload with collateral information
         bytes memory payload = abi.encode(msg.sender, _collateralAmount);
 
+        // Define LZ options
+        bytes memory options = combineOptions(destChainId, SEND, _extraSendOptions);
+
+        // Estimate and charge the LZ messaging fee
         MessagingFee memory fee = _quote(destChainId, payload, options, false);
 
         receipt = _lzSend(destChainId, payload, options, fee, payable(msg.sender));
@@ -61,9 +87,11 @@ contract DestPool is OApp, OAppOptionsType3 {
     ) internal override {
         address borrower = abi.decode(payload, (address));
 
-        IERC20(collateralToken).approve(address(this), depositedCollateral[borrower]);
+        uint256 amountToReturn = depositedCollateral[borrower];
+        require(amountToReturn > 0, "No collateral to return");
+        // Retrieve and reset the collateral amount
 
-        IERC20(collateralToken).transfer(borrower, depositedCollateral[borrower]);
+        IERC20(collateralToken).transfer(borrower, amountToReturn);
 
         delete depositedCollateral[borrower];
     }
