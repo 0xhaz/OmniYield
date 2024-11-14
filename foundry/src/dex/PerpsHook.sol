@@ -18,7 +18,7 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {PoolGetters} from "src/libraries/PoolGetters.sol";
-import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
+import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -125,7 +125,7 @@ contract PerpsHook is BaseHook, ERC6909 {
             beforeInitialize: true,
             afterInitialize: true,
             beforeAddLiquidity: false,
-            beforeRemoveLiquidity: true,
+            beforeRemoveLiquidity: false,
             afterAddLiquidity: false,
             afterRemoveLiquidity: false,
             beforeSwap: true,

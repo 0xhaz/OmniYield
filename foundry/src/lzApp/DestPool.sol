@@ -44,6 +44,7 @@ contract DestPool is OApp, OAppOptionsType3 {
         payable
         returns (MessagingReceipt memory receipt)
     {
+        require(_collateralAmount > 0, "Amount is zero");
         IERC20(collateralToken).transferFrom(msg.sender, address(this), _collateralAmount);
         depositedCollateral[msg.sender] += _collateralAmount;
 
@@ -61,6 +62,7 @@ contract DestPool is OApp, OAppOptionsType3 {
         payable
         returns (MessagingReceipt memory receipt)
     {
+        require(_collateralAmount > 0, "Amount is zero");
         IERC20(collateralToken).transferFrom(msg.sender, address(this), _collateralAmount);
 
         // Store collateral for borrower
@@ -91,6 +93,7 @@ contract DestPool is OApp, OAppOptionsType3 {
         require(amountToReturn > 0, "No collateral to return");
         // Retrieve and reset the collateral amount
 
+        IERC20(collateralToken).approve(address(this), amountToReturn);
         IERC20(collateralToken).transfer(borrower, amountToReturn);
 
         delete depositedCollateral[borrower];

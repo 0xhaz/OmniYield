@@ -159,7 +159,6 @@ contract SrcPool is OApp, OAppOptionsType3 {
         // Update the pool balance and send loan amount to borrower
         poolMetadata.poolBalance -= loanAmount;
 
-        IERC20(poolMetadata.poolToken).approve(address(this), loanAmount);
         IERC20(poolMetadata.poolToken).transfer(borrower, loanAmount);
     }
 

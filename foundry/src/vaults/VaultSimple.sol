@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.26;
 
-import {Owned} from "solmate/auth/Owned.sol";
-import {ERC4626, ERC20} from "solmate/mixins/ERC4626.sol";
-import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
-import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
+import {Owned} from "solmate/src/auth/Owned.sol";
+import {ERC4626, ERC20} from "solmate/src/mixins/ERC4626.sol";
+import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 import {VaultBase, IEVC, EVCClient} from "src/abstracts/VaultBase.sol";
 import {EVCUtil} from "evc/src/utils/EVCUtil.sol";
 

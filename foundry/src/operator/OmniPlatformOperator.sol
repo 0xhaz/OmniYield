@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.26;
 
-import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
+import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {IEVC} from "src/abstracts/VaultBase.sol";
 
 contract OmniPlatformOperator {
