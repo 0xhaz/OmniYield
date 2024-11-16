@@ -23,6 +23,7 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC6909} from "v4-core/ERC6909.sol";
+import {console} from "forge-std/Console.sol";
 
 /**
  * @title PerpsHook
@@ -757,12 +758,17 @@ contract PerpsHook is BaseHook, ERC6909 {
     {
         delta = poolManager.swap(key, params, ZERO_BYTES);
 
+        console.log("//////// Swap ////////");
+
         // return delta
         if (params.zeroForOne) {
+            console.log("//////// ZeroForOne for amount0() ////////");
             if (delta.amount0() < 0) {
                 if (key.currency0.isAddressZero()) {
+                    console.log("//////// ZeroForOne for amount0() isAddressZero() ////////");
                     _settle(key.currency0, uint128(-delta.amount0()));
                 } else {
+                    console.log("//////// ZeroForOne for amount0() !isAddressZero() ////////");
                     IERC20Minimal(Currency.unwrap(key.currency0)).transfer(
                         address(poolManager), uint128(-delta.amount0())
                     );
@@ -770,13 +776,17 @@ contract PerpsHook is BaseHook, ERC6909 {
                 }
             }
             if (delta.amount1() > 0) {
+                console.log("//////// ZeroForOne for amount1() ////////");
                 _take(key.currency1, uint128(delta.amount1()));
             }
         } else {
             if (delta.amount1() < 0) {
+                console.log("//////// OneForZero for amount1() ////////");
                 if (key.currency1.isAddressZero()) {
+                    console.log("//////// OneForZero for amount1() isAddressZero() ////////");
                     _settle(key.currency1, uint128(-delta.amount1()));
                 } else {
+                    console.log("//////// OneForZero for amount1() !isAddressZero() ////////");
                     IERC20Minimal(Currency.unwrap(key.currency1)).transfer(
                         address(poolManager), uint128(-delta.amount1())
                     );
@@ -784,6 +794,7 @@ contract PerpsHook is BaseHook, ERC6909 {
                 }
             }
             if (delta.amount0() > 0) {
+                console.log("//////// OneForZero for amount0() ////////");
                 _take(key.currency0, uint128(delta.amount0()));
             }
         }

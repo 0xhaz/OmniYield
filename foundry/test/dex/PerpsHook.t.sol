@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.26;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test, console2} from "forge-std/Test.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
@@ -53,6 +53,9 @@ contract PerpsHookTest is Test, Deployers {
         poolId = key.toId();
         manager.initialize(key, SQRT_PRICE_1_1);
 
+        // IPoolManager(address(manager)).sync(currency0);
+        // IPoolManager(address(manager)).sync(currency1);
+
         USDe.mint(bob, 1000e18);
         USDe.mint(alice, 1000e18);
         USDe.mint(carol, 1000e18);
@@ -98,5 +101,126 @@ contract PerpsHookTest is Test, Deployers {
             IPoolManager.ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: liquidityDelta, salt: 0}),
             ZERO_BYTES
         );
+    }
+
+    function test_Place_Position() public {
+        address token0 = Currency.unwrap(currency0);
+        deal(token0, bob, 1 ether);
+
+        uint24 onePercent = 10_000;
+
+        (, int24 tickSlot,,) = StateLibrary.getSlot0(manager, key.toId());
+        int24 tickPercent = tickSlot - ((100 * int24(onePercent)) / 10_000);
+        int24 tickLower = getTickLower(tickPercent, key.tickSpacing);
+
+        assertEq(tickLower, -100);
+
+        uint256 amount = hook.positionIds(poolId, tickLower, true);
+        assertEq(0, amount);
+
+        uint256 activeLength = hook.countActivePositionByPercent(poolId, onePercent, true);
+
+        uint256 tickLength = hook.countActivePositionByTicks(poolId, tickLower, true);
+
+        assertEq(0, activeLength);
+        assertEq(0, tickLength);
+
+        vm.startPrank(bob);
+        IERC20(token0).approve(address(hook), 1 ether);
+
+        (int24 tickPosition, uint256 positionId) = hook.placePosition(key, onePercent, 0.5 ether, true);
+
+        vm.stopPrank();
+
+        assertEq(positionId, 1);
+        assertEq(tickPosition, tickLower);
+
+        uint256 amountAfter = hook.positionIds(poolId, tickLower, true);
+        assertEq(0.5 ether, amountAfter);
+
+        uint256 balance = hook.balanceOf(bob, positionId);
+        assertEq(0.5 ether, balance);
+
+        activeLength = hook.countActivePositionByPercent(poolId, onePercent, true);
+        uint256 activeId = hook.positionByPercentId(poolId, onePercent, true, 0);
+
+        assertEq(1, activeLength);
+        assertEq(1, activeId);
+
+        tickLength = hook.countActivePositionByTicks(poolId, tickLower, true);
+        uint256 idTickList = hook.positionByTicksId(poolId, tickLower, true, 0);
+
+        assertEq(tickLength, 1);
+        assertEq(idTickList, 1);
+    }
+
+    function test_Remove_Positions() public {
+        address token0 = Currency.unwrap(currency0);
+        deal(token0, bob, 1 ether);
+
+        uint24 onePercent = 10_000;
+
+        vm.startPrank(bob);
+        IERC20(token0).approve(address(hook), 1 ether);
+        (, uint256 positionId) = hook.placePosition(key, onePercent, 0.5 ether, true);
+        vm.stopPrank();
+
+        uint256 balance0 = IERC20(token0).balanceOf(bob);
+        uint256 balance = hook.balanceOf(bob, positionId);
+        assertEq(0.5 ether, balance);
+        assertEq(0.5 ether, balance0);
+
+        vm.startPrank(bob);
+        hook.removePosition(1);
+        vm.stopPrank();
+
+        balance0 = IERC20(token0).balanceOf(bob);
+        balance = hook.balanceOf(bob, positionId);
+        assertEq(0, balance);
+        assertEq(1 ether, balance0);
+    }
+
+    function test_Execute_Position() public {
+        address token0 = Currency.unwrap(currency0);
+        address token1 = Currency.unwrap(currency1);
+        deal(token0, bob, 1 ether);
+
+        uint24 onePercent = 10_000;
+
+        (, int24 tickSlot,,) = StateLibrary.getSlot0(manager, key.toId());
+        int24 tickPercent = tickSlot - ((100 * int24(onePercent)) / 10_000);
+        int24 tickLower = getTickLower(tickPercent, key.tickSpacing);
+
+        vm.startPrank(bob);
+        IERC20(token0).approve(address(hook), 1 ether);
+        (int24 tickPosition, uint256 positionId) = hook.placePosition(key, onePercent, 0.5 ether, true);
+        vm.stopPrank();
+
+        bool zeroForOne = true;
+        int256 amountSpecified = -2e18; // negative number indicates exact input swap
+        BalanceDelta swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        zeroForOne = false;
+        amountSpecified = -2e18; // negative number indicates exact input swap
+        swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        vm.startPrank(bob);
+        vm.expectRevert(abi.encodeWithSelector(PerpsHook.PerpsHook__AlreadyFilled.selector, 1));
+        hook.removePosition(1);
+
+        // user claim his money
+        hook.claim(1);
+        vm.stopPrank();
+
+        uint256 balance1 = IERC20(token1).balanceOf(bob);
+        uint256 balance = hook.balanceOf(bob, positionId);
+        assertEq(0, balance);
+        assertGt(balance1, 0.4 ether);
+    }
+
+    function getTickLower(int24 tick, int24 tickSpacing) private pure returns (int24) {
+        int24 compressed = tick / tickSpacing;
+        if (tick < 0 && tick % tickSpacing != 0) compressed--;
+        return compressed * tickSpacing;
     }
 }
