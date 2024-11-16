@@ -53,12 +53,11 @@ contract PerpsHookTest is Test, Deployers {
         poolId = key.toId();
         manager.initialize(key, SQRT_PRICE_1_1);
 
-        // IPoolManager(address(manager)).sync(currency0);
-        // IPoolManager(address(manager)).sync(currency1);
+        callSync();
 
-        USDe.mint(bob, 1000e18);
-        USDe.mint(alice, 1000e18);
-        USDe.mint(carol, 1000e18);
+        // USDe.mint(bob, 1000e18);
+        // USDe.mint(alice, 1000e18);
+        // USDe.mint(carol, 1000e18);
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
@@ -222,5 +221,21 @@ contract PerpsHookTest is Test, Deployers {
         int24 compressed = tick / tickSpacing;
         if (tick < 0 && tick % tickSpacing != 0) compressed--;
         return compressed * tickSpacing;
+    }
+
+    function callSync() public {
+        // Ensure the manager is unlocked before calling sync
+        vm.startPrank(address(manager));
+        try manager.sync(currency0) {
+            console2.log("Sync currency0 successful");
+        } catch Error(string memory reason) {
+            console2.log("Sync currency0 failed:", reason);
+        }
+        try manager.sync(currency1) {
+            console2.log("Sync currency1 successful");
+        } catch Error(string memory reason) {
+            console2.log("Sync currency1 failed:", reason);
+        }
+        vm.stopPrank();
     }
 }

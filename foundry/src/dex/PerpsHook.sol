@@ -752,7 +752,7 @@ contract PerpsHook is BaseHook, ERC6909 {
         return 0;
     }
 
-    function handleSwap(PoolKey memory key, IPoolManager.SwapParams memory params, address)
+    function handleSwap(PoolKey memory key, IPoolManager.SwapParams memory params, address sender)
         private
         returns (BalanceDelta delta)
     {
@@ -761,24 +761,21 @@ contract PerpsHook is BaseHook, ERC6909 {
         console.log("//////// Swap ////////");
 
         // return delta
-        if (params.zeroForOne) {
-            console.log("//////// ZeroForOne for amount0() ////////");
-            if (delta.amount0() < 0) {
-                if (key.currency0.isAddressZero()) {
-                    console.log("//////// ZeroForOne for amount0() isAddressZero() ////////");
-                    _settle(key.currency0, uint128(-delta.amount0()));
-                } else {
-                    console.log("//////// ZeroForOne for amount0() !isAddressZero() ////////");
-                    IERC20Minimal(Currency.unwrap(key.currency0)).transfer(
-                        address(poolManager), uint128(-delta.amount0())
-                    );
-                    poolManager.settle();
-                }
+
+        console.log("//////// ZeroForOne for amount0() ////////");
+        if (delta.amount0() < 0) {
+            if (key.currency0.isAddressZero()) {
+                console.log("//////// ZeroForOne for amount0() isAddressZero() ////////");
+                _settle(key.currency0, uint128(-delta.amount0()));
+            } else {
+                console.log("//////// ZeroForOne for amount0() !isAddressZero() ////////");
+                IERC20Minimal(Currency.unwrap(key.currency0)).transfer(address(poolManager), uint128(-delta.amount0()));
+                poolManager.settle();
             }
-            if (delta.amount1() > 0) {
-                console.log("//////// ZeroForOne for amount1() ////////");
-                _take(key.currency1, uint128(delta.amount1()));
-            }
+        }
+        if (delta.amount1() > 0) {
+            console.log("//////// ZeroForOne for amount1() ////////");
+            _take(key.currency1, uint128(delta.amount1()));
         } else {
             if (delta.amount1() < 0) {
                 console.log("//////// OneForZero for amount1() ////////");
