@@ -34,8 +34,8 @@ contract PerpsHookTest is Test, Deployers {
     PoolId poolId;
 
     function setUp() public {
-        Deployers.deployFreshManagerAndRouters();
-        Deployers.deployMintAndApprove2Currencies();
+        deployFreshManagerAndRouters();
+        deployMintAndApprove2Currencies();
 
         uint160 flags = uint160(
             Hooks.BEFORE_INITIALIZE_FLAG | Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
@@ -53,29 +53,27 @@ contract PerpsHookTest is Test, Deployers {
         poolId = key.toId();
         manager.initialize(key, SQRT_PRICE_1_1);
 
-        callSync();
-
         // USDe.mint(bob, 1000e18);
         // USDe.mint(alice, 1000e18);
         // USDe.mint(carol, 1000e18);
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            IPoolManager.ModifyLiquidityParams({tickLower: -50, tickUpper: 50, liquidityDelta: 10e18, salt: 0}),
+            IPoolManager.ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: 10e18, salt: 0}),
             ZERO_BYTES
         );
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            IPoolManager.ModifyLiquidityParams({tickLower: -100, tickUpper: 100, liquidityDelta: 10e18, salt: 0}),
+            IPoolManager.ModifyLiquidityParams({tickLower: -120, tickUpper: 120, liquidityDelta: 10e18, salt: 0}),
             ZERO_BYTES
         );
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
             IPoolManager.ModifyLiquidityParams({
-                tickLower: TickMath.minUsableTick(50),
-                tickUpper: TickMath.maxUsableTick(50),
+                tickLower: TickMath.minUsableTick(60),
+                tickUpper: TickMath.maxUsableTick(60),
                 liquidityDelta: 10e18,
                 salt: 0
             }),
@@ -87,7 +85,7 @@ contract PerpsHookTest is Test, Deployers {
         int256 liquidityDelta = -1e18;
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            IPoolManager.ModifyLiquidityParams({tickLower: -50, tickUpper: 50, liquidityDelta: liquidityDelta, salt: 0}),
+            IPoolManager.ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: liquidityDelta, salt: 0}),
             ZERO_BYTES
         );
     }
@@ -197,11 +195,24 @@ contract PerpsHookTest is Test, Deployers {
 
         bool zeroForOne = true;
         int256 amountSpecified = -2e18; // negative number indicates exact input swap
+
+        console2.log("Before Swap - Token0 Balance:", IERC20(token0).balanceOf(address(manager)));
+        console2.log("Before Swap - Token1 Balance:", IERC20(token1).balanceOf(address(manager)));
+
         BalanceDelta swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        console2.log("After Swap - Token0 Balance:", IERC20(token0).balanceOf(address(manager)));
+        console2.log("After Swap - Token1 Balance:", IERC20(token1).balanceOf(address(manager)));
 
         zeroForOne = false;
         amountSpecified = -2e18; // negative number indicates exact input swap
+        console2.log("Before Swap - Token0 Balance:", IERC20(token0).balanceOf(address(manager)));
+        console2.log("Before Swap - Token1 Balance:", IERC20(token1).balanceOf(address(manager)));
+
         swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        console2.log("After Swap - Token0 Balance:", IERC20(token0).balanceOf(address(manager)));
+        console2.log("After Swap - Token1 Balance:", IERC20(token1).balanceOf(address(manager)));
 
         vm.startPrank(bob);
         vm.expectRevert(abi.encodeWithSelector(PerpsHook.PerpsHook__AlreadyFilled.selector, 1));
@@ -221,21 +232,5 @@ contract PerpsHookTest is Test, Deployers {
         int24 compressed = tick / tickSpacing;
         if (tick < 0 && tick % tickSpacing != 0) compressed--;
         return compressed * tickSpacing;
-    }
-
-    function callSync() public {
-        // Ensure the manager is unlocked before calling sync
-        vm.startPrank(address(manager));
-        try manager.sync(currency0) {
-            console2.log("Sync currency0 successful");
-        } catch Error(string memory reason) {
-            console2.log("Sync currency0 failed:", reason);
-        }
-        try manager.sync(currency1) {
-            console2.log("Sync currency1 successful");
-        } catch Error(string memory reason) {
-            console2.log("Sync currency1 failed:", reason);
-        }
-        vm.stopPrank();
     }
 }
