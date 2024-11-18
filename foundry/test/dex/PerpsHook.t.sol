@@ -21,19 +21,25 @@ import {MockUSDe} from "test/mocks/MockUSDe.sol";
 contract PerpsHookTest is Test, Deployers {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
+    using StateLibrary for IPoolManager;
 
     address bob = makeAddr("bob");
     address alice = makeAddr("alice");
     address carol = makeAddr("carol");
 
-    // IERC20 USDe = IERC20(0xf805ce4F96e0EdD6f0b6cd4be22B34b92373d696);
-    MockUSDe USDe = new MockUSDe();
+    address USDe_TOKEN = 0xf805ce4F96e0EdD6f0b6cd4be22B34b92373d696;
+    address USDe_OFT_ADAPTER = 0x162cc96D5E528F3E5Ce02EF3847216a917ba55bb;
+    address USDe_OFT_BLE = 0x426E7d03f9803Dd11cb8616C65b99a3c0AfeA6dE;
+
+    IERC20 USDe = IERC20(USDe_TOKEN);
+    // MockUSDe USDe = new MockUSDe();
     uint256 public sUSDeRewardRate = 1000; // 10%
 
     PerpsHook hook;
     PoolId poolId;
 
     function setUp() public {
+        vm.createSelectFork({urlOrAlias: "ethena_testnet"});
         deployFreshManagerAndRouters();
         deployMintAndApprove2Currencies();
 
@@ -59,21 +65,21 @@ contract PerpsHookTest is Test, Deployers {
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            IPoolManager.ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: 10e18, salt: 0}),
+            IPoolManager.ModifyLiquidityParams({tickLower: -50, tickUpper: 50, liquidityDelta: 10e18, salt: 0}),
             ZERO_BYTES
         );
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            IPoolManager.ModifyLiquidityParams({tickLower: -120, tickUpper: 120, liquidityDelta: 10e18, salt: 0}),
+            IPoolManager.ModifyLiquidityParams({tickLower: -100, tickUpper: 100, liquidityDelta: 10e18, salt: 0}),
             ZERO_BYTES
         );
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
             IPoolManager.ModifyLiquidityParams({
-                tickLower: TickMath.minUsableTick(60),
-                tickUpper: TickMath.maxUsableTick(60),
+                tickLower: TickMath.minUsableTick(50),
+                tickUpper: TickMath.maxUsableTick(50),
                 liquidityDelta: 10e18,
                 salt: 0
             }),
@@ -85,7 +91,7 @@ contract PerpsHookTest is Test, Deployers {
         int256 liquidityDelta = -1e18;
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            IPoolManager.ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: liquidityDelta, salt: 0}),
+            IPoolManager.ModifyLiquidityParams({tickLower: -50, tickUpper: 50, liquidityDelta: liquidityDelta, salt: 0}),
             ZERO_BYTES
         );
     }
@@ -112,7 +118,7 @@ contract PerpsHookTest is Test, Deployers {
 
         assertEq(tickLower, -100);
 
-        uint256 amount = hook.positionIds(poolId, tickLower, true);
+        uint256 amount = hook.lastPositionId(poolId, tickLower, true);
         assertEq(0, amount);
 
         uint256 activeLength = hook.countActivePositionByPercent(poolId, onePercent, true);
@@ -132,7 +138,7 @@ contract PerpsHookTest is Test, Deployers {
         assertEq(positionId, 1);
         assertEq(tickPosition, tickLower);
 
-        uint256 amountAfter = hook.positionIds(poolId, tickLower, true);
+        uint256 amountAfter = hook.lastPositionId(poolId, tickLower, true);
         assertEq(0.5 ether, amountAfter);
 
         uint256 balance = hook.balanceOf(bob, positionId);
@@ -184,7 +190,7 @@ contract PerpsHookTest is Test, Deployers {
 
         uint24 onePercent = 10_000;
 
-        (, int24 tickSlot,,) = StateLibrary.getSlot0(manager, key.toId());
+        (, int24 tickSlot,,) = manager.getSlot0(key.toId());
         int24 tickPercent = tickSlot - ((100 * int24(onePercent)) / 10_000);
         int24 tickLower = getTickLower(tickPercent, key.tickSpacing);
 
@@ -196,23 +202,12 @@ contract PerpsHookTest is Test, Deployers {
         bool zeroForOne = true;
         int256 amountSpecified = -2e18; // negative number indicates exact input swap
 
-        console2.log("Before Swap - Token0 Balance:", IERC20(token0).balanceOf(address(manager)));
-        console2.log("Before Swap - Token1 Balance:", IERC20(token1).balanceOf(address(manager)));
-
         BalanceDelta swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
-
-        console2.log("After Swap - Token0 Balance:", IERC20(token0).balanceOf(address(manager)));
-        console2.log("After Swap - Token1 Balance:", IERC20(token1).balanceOf(address(manager)));
 
         zeroForOne = false;
         amountSpecified = -2e18; // negative number indicates exact input swap
-        console2.log("Before Swap - Token0 Balance:", IERC20(token0).balanceOf(address(manager)));
-        console2.log("Before Swap - Token1 Balance:", IERC20(token1).balanceOf(address(manager)));
 
         swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
-
-        console2.log("After Swap - Token0 Balance:", IERC20(token0).balanceOf(address(manager)));
-        console2.log("After Swap - Token1 Balance:", IERC20(token1).balanceOf(address(manager)));
 
         vm.startPrank(bob);
         vm.expectRevert(abi.encodeWithSelector(PerpsHook.PerpsHook__AlreadyFilled.selector, 1));
@@ -226,6 +221,199 @@ contract PerpsHookTest is Test, Deployers {
         uint256 balance = hook.balanceOf(bob, positionId);
         assertEq(0, balance);
         assertGt(balance1, 0.4 ether);
+
+        uint256 amount = hook.lastPositionId(poolId, tickLower, true);
+
+        uint256 activeLength = hook.countActivePositionByPercent(poolId, onePercent, true);
+
+        uint256 tickLength = hook.countActivePositionByTicks(poolId, tickLower, true);
+
+        assertEq(0, amount);
+        assertEq(0, activeLength);
+        assertEq(0, tickLength);
+    }
+
+    function test_Execute_Position_Inversed() public {
+        address token1 = Currency.unwrap(currency1);
+        address token0 = Currency.unwrap(currency0);
+        deal(token1, bob, 1 ether);
+
+        uint24 onePercent = 10_000;
+
+        (, int24 tickSlot,,) = manager.getSlot0(key.toId());
+        int24 tickPercent = tickSlot - ((100 * int24(onePercent)) / 10_000);
+        int24 tickLower = getTickLower(tickPercent, key.tickSpacing);
+
+        vm.startPrank(bob);
+        IERC20(token1).approve(address(hook), 1 ether);
+        (int24 tickPosition, uint256 positionId) = hook.placePosition(key, onePercent, 0.5 ether, false);
+        vm.stopPrank();
+
+        bool zeroForOne = false;
+        int256 amountSpecified = -2e18; // negative number indicates exact input swap
+        BalanceDelta swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        zeroForOne = true;
+        amountSpecified = -2e18; // negative number indicates exact input swap
+        swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        vm.startPrank(bob);
+        vm.expectRevert(abi.encodeWithSelector(PerpsHook.PerpsHook__AlreadyFilled.selector, 1));
+        hook.removePosition(1);
+
+        // user claim his money
+        hook.claim(1);
+        vm.stopPrank();
+        uint256 balance1 = IERC20(token0).balanceOf(bob);
+        uint256 balance = hook.balanceOf(bob, positionId);
+        assertEq(0, balance);
+        assertGt(balance1, 0.4 ether);
+
+        uint256 amount = hook.lastPositionId(poolId, tickLower, false);
+
+        uint256 activeLength = hook.countActivePositionByPercent(poolId, onePercent, false);
+
+        uint256 tickLength = hook.countActivePositionByTicks(poolId, tickLower, false);
+
+        assertEq(0, amount);
+        assertEq(0, activeLength);
+        assertEq(0, tickLength);
+    }
+
+    function test_Multiple_Position() public {
+        address token0 = Currency.unwrap(currency0);
+        deal(token0, bob, 1 ether);
+
+        uint24 onePercent = 10_000;
+        uint24 fivePercent = 50_000;
+
+        (, int24 tickSlot,,) = manager.getSlot0(key.toId());
+        int24 tickPercent = tickSlot - ((100 * int24(onePercent)) / 10_000);
+        int24 tickLower = getTickLower(tickPercent, key.tickSpacing);
+
+        int24 tickPercent5 = tickSlot - ((100 * int24(fivePercent)) / 10_000);
+        int24 tickLower5 = getTickLower(tickPercent5, key.tickSpacing);
+
+        vm.startPrank(bob);
+        IERC20(token0).approve(address(hook), 1 ether);
+
+        hook.placePosition(key, onePercent, 0.5 ether, true);
+        hook.placePosition(key, fivePercent, 0.3 ether, true);
+        vm.stopPrank();
+
+        uint256 amount = hook.lastPositionId(poolId, tickLower, true);
+
+        uint256 amount5percent = hook.lastPositionId(poolId, tickPercent5, true);
+
+        uint256 activeLength = hook.countActivePositionByPercent(poolId, onePercent, true);
+
+        uint256 activeLength5 = hook.countActivePositionByPercent(poolId, fivePercent, true);
+
+        uint256 tickLength = hook.countActivePositionByTicks(poolId, tickLower, true);
+
+        uint256 tickLength5 = hook.countActivePositionByTicks(poolId, tickLower5, true);
+
+        assertEq(0.5 ether, amount);
+        assertEq(0.3 ether, amount5percent);
+        assertEq(1, activeLength);
+        assertEq(1, activeLength5);
+        assertEq(1, tickLength);
+        assertEq(1, tickLength5);
+        assertEq(hook.lastTokenId(), 2);
+    }
+
+    function test_Merge_Position() public {
+        address token0 = Currency.unwrap(currency0);
+        deal(token0, bob, 1 ether);
+        deal(token0, alice, 1 ether);
+
+        uint24 onePercent = 10_000;
+
+        (, int24 tickSlot,,) = manager.getSlot0(key.toId());
+        int24 tickPercent = tickSlot - ((100 * int24(onePercent)) / 10_000);
+        int24 tickLower = getTickLower(tickPercent, key.tickSpacing);
+
+        vm.startPrank(bob);
+        IERC20(token0).approve(address(hook), 1 ether);
+        hook.placePosition(key, onePercent, 0.5 ether, true);
+        vm.stopPrank();
+
+        vm.startPrank(alice);
+        IERC20(token0).approve(address(hook), 1 ether);
+        hook.placePosition(key, onePercent, 0.2 ether, true);
+        vm.stopPrank();
+
+        uint256 amount = hook.lastPositionId(poolId, tickLower, true);
+
+        uint256 activeLength = hook.countActivePositionByPercent(poolId, onePercent, true);
+
+        uint256 tickLength = hook.countActivePositionByTicks(poolId, tickLower, true);
+
+        assertEq(0.7 ether, amount);
+        assertEq(1, activeLength);
+        assertEq(1, tickLength);
+        assertEq(hook.lastTokenId(), 1);
+    }
+
+    function test_Multiple_Execution_Positions() public {
+        address token0 = Currency.unwrap(currency0);
+        address token1 = Currency.unwrap(currency1);
+        deal(token0, bob, 1 ether);
+        deal(token0, alice, 1 ether);
+
+        uint24 onePercent = 10_000;
+        uint24 fivePercent = 50_000;
+
+        (, int24 tickSlot,,) = manager.getSlot0(key.toId());
+        int24 tickPercent = tickSlot - ((100 * int24(onePercent)) / 10_000);
+        int24 tickLower = getTickLower(tickPercent, key.tickSpacing);
+
+        int24 tickPercent5 = tickSlot - ((100 * int24(fivePercent)) / 10_000);
+        int24 tickLower5 = getTickLower(tickPercent5, key.tickSpacing);
+
+        vm.startPrank(bob);
+        IERC20(token0).approve(address(hook), 1 ether);
+        (, uint256 tokenBob) = hook.placePosition(key, onePercent, 0.5 ether, true);
+        hook.placePosition(key, fivePercent, 0.3 ether, true);
+        vm.stopPrank();
+
+        vm.startPrank(alice);
+        IERC20(token0).approve(address(hook), 1 ether);
+        (, uint256 tokenAlice) = hook.placePosition(key, onePercent, 0.5 ether, true);
+        hook.placePosition(key, fivePercent, 0.3 ether, true);
+        vm.stopPrank();
+
+        bool zeroForOne = false;
+        int256 amountSpecified = -2e18; // negative number indicates exact input swap
+        BalanceDelta swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        zeroForOne = true;
+        amountSpecified = -2e18; // negative number indicates exact input swap
+        swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        zeroForOne = false;
+        amountSpecified = -3e18; // negative number indicates exact input swap
+        swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        zeroForOne = true;
+        amountSpecified = -4e18; // negative number indicates exact input swap
+        swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+
+        vm.startPrank(bob);
+        hook.claim(tokenBob);
+
+        vm.expectRevert();
+        hook.claim(tokenAlice);
+        vm.stopPrank();
+
+        vm.startPrank(alice);
+        hook.claim(tokenAlice);
+        vm.stopPrank();
+
+        uint256 balanceBob = IERC20(token1).balanceOf(bob);
+        uint256 balanceAlice = IERC20(token0).balanceOf(alice);
+        assertGt(balanceBob, 0.1 ether);
+        assertGt(balanceAlice, 0.1 ether);
     }
 
     function getTickLower(int24 tick, int24 tickSpacing) private pure returns (int24) {

@@ -15,6 +15,8 @@ remappings = [
     '@layerzerolabs/oapp-evm/=lib/devtools/packages/oapp-evm/',
     '@layerzerolabs/lz-evm-protocol-v2/=lib/layerzero-v2/packages/layerzero-v2/evm/protocol',
 ]
+[rpc_endpoints]
+ethena_testnet = "https://testnet.rpc.ethena.fi"
 
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

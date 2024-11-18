@@ -2,6 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {BaseHook} from "v4-periphery/src/base/hooks/BaseHook.sol";
+import {Test, console2} from "forge-std/Test.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {TickBitmap} from "v4-core/libraries/TickBitmap.sol";
 import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
@@ -70,7 +71,7 @@ contract PerpsHook is BaseHook, ERC6909 {
     uint160 public constant MAX_PRICE_LIMIT = TickMath.MAX_SQRT_PRICE - 1;
 
     mapping(PoolId poolId => int24 tickLower) public tickLowerLasts;
-    mapping(PoolId poolId => mapping(int24 tick => mapping(bool zeroForOne => uint256 amount))) public positionIds;
+    mapping(PoolId poolId => mapping(int24 tick => mapping(bool zeroForOne => uint256 amount))) public lastPositionId;
     mapping(PoolId poolId => mapping(int24 tick => mapping(bool zeroForOne => uint256[]))) public positionByTicksId;
     mapping(PoolId => mapping(uint24 percent => mapping(bool zeroForOne => uint256[]))) public positionByPercentId;
     mapping(uint256 timestamp => uint256 reward) public lastRewardCalculation;
@@ -121,7 +122,7 @@ contract PerpsHook is BaseHook, ERC6909 {
         sUSDeRewardRate = _sUSDeRewardRate;
     }
 
-    function getHookPermissions() public pure virtual override returns (Hooks.Permissions memory) {
+    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: true,
             afterInitialize: true,
@@ -149,7 +150,12 @@ contract PerpsHook is BaseHook, ERC6909 {
         return this.beforeInitialize.selector;
     }
 
-    function afterInitialize(address, PoolKey calldata key, uint160, int24 tick) external override returns (bytes4) {
+    function afterInitialize(address, PoolKey calldata key, uint160, int24 tick)
+        external
+        override
+        onlyPoolManager
+        returns (bytes4)
+    {
         PoolId id = key.toId();
 
         setTickLowerLast(id, getTickLower(tick, key.tickSpacing));
@@ -202,6 +208,7 @@ contract PerpsHook is BaseHook, ERC6909 {
         uint24 adjustedFee = uint24(feeAdjustment);
 
         return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, adjustedFee);
+        // return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
     function afterSwap(
@@ -225,12 +232,12 @@ contract PerpsHook is BaseHook, ERC6909 {
 
         // fill trailing in the opposite direction of the swap
         // avoids attack vectors
-        bool stopLossZeroForOne = !params.zeroForOne;
         uint256 swapAmount;
+        bool stopLossZeroForOne = !params.zeroForOne;
 
         if (prevTick < currentTick) {
             for (; tick < currentTick;) {
-                swapAmount = positionIds[id][tick][stopLossZeroForOne];
+                swapAmount = lastPositionId[id][tick][stopLossZeroForOne];
 
                 if (swapAmount > 0) {
                     fillStopLoss(key, tick, stopLossZeroForOne, swapAmount);
@@ -243,7 +250,7 @@ contract PerpsHook is BaseHook, ERC6909 {
             }
         } else {
             for (; currentTick < tick;) {
-                swapAmount = positionIds[id][tick][stopLossZeroForOne];
+                swapAmount = lastPositionId[id][tick][stopLossZeroForOne];
 
                 if (swapAmount > 0) {
                     fillStopLoss(key, tick, stopLossZeroForOne, swapAmount);
@@ -326,7 +333,7 @@ contract PerpsHook is BaseHook, ERC6909 {
         address token = zeroForOne ? Currency.unwrap(key.currency0) : Currency.unwrap(key.currency1);
         IERC20(token).transferFrom(msg.sender, address(this), amountIn);
 
-        positionIds[id][tickLower][zeroForOne] += amountIn;
+        lastPositionId[id][tickLower][zeroForOne] += amountIn;
 
         // found corresponding position in existing position
         tokenId = mergePosition(id, percent, zeroForOne, amountIn, tickLower, 0);
@@ -356,10 +363,10 @@ contract PerpsHook is BaseHook, ERC6909 {
         // the trailing can be merge with other trailing to check if it's possible to merge
         uint256 activeId = getActivePosition(id);
 
-        PositionInfo storage position = positionInfoById[activeId];
+        PositionInfo storage trailing = positionInfoById[activeId];
         LeveragePosition storage leveragePos = leveragePositionById[id];
 
-        if (position.filledAmount > 0) {
+        if (trailing.filledAmount > 0) {
             // if trailing was filled then it wont get cancelled
             revert PerpsHook__AlreadyFilled(id);
         }
@@ -374,19 +381,19 @@ contract PerpsHook is BaseHook, ERC6909 {
 
         // burn the share of the user and remove the active position
         _burn(msg.sender, id, userBalance);
-        position.totalAmount -= userBalance;
+        trailing.totalAmount -= userBalance;
 
-        PoolKey memory key = position.poolKey;
-        bool zeroForOne = position.zeroForOne;
+        PoolKey memory key = trailing.poolKey;
+        bool zeroForOne = trailing.zeroForOne;
         PoolId poolId = key.toId();
-        int24 tick = position.tickLower;
+        int24 tick = trailing.tickLower;
 
         // remove amount from trailing position
-        positionIds[poolId][tick][zeroForOne] -= userBalance;
+        lastPositionId[poolId][tick][zeroForOne] -= userBalance;
 
         // if the trailing got no amount anymore, we delete it from everywhere
-        if (position.totalAmount == 0) {
-            deleteFromActive(activeId, poolId, position.percent, zeroForOne);
+        if (trailing.totalAmount == 0) {
+            deleteFromActive(activeId, poolId, trailing.percent, zeroForOne);
             deleteFromTicks(activeId, poolId, tick, zeroForOne);
         }
 
@@ -406,16 +413,15 @@ contract PerpsHook is BaseHook, ERC6909 {
         if (receiptBalance == 0) revert PerpsHook__ZeroClaim(tokenId);
 
         uint256 activeId = getActivePosition(tokenId);
-        PositionInfo storage position = positionInfoById[activeId];
+        PositionInfo memory data = positionInfoById[activeId];
 
-        if (position.filledAmount == 0) revert PerpsHook__NotExecuted(tokenId);
+        if (data.filledAmount == 0) revert PerpsHook__NotExecuted(tokenId);
 
-        address token = position.zeroForOne
-            ? Currency.unwrap(position.poolKey.currency0)
-            : Currency.unwrap(position.poolKey.currency1);
+        address token =
+            data.zeroForOne ? Currency.unwrap(data.poolKey.currency1) : Currency.unwrap(data.poolKey.currency0);
 
         // burn the token
-        uint256 amountOut = receiptBalance.mulDivDown(position.filledAmount, position.totalAmount);
+        uint256 amountOut = receiptBalance.mulDivDown(data.filledAmount, data.totalAmount);
 
         _burn(msg.sender, tokenId, receiptBalance);
 
@@ -530,13 +536,12 @@ contract PerpsHook is BaseHook, ERC6909 {
         tickLowerLasts[id] = tickLower;
     }
 
-    function getActivePosition(uint256 tokenId) public view returns (uint256) {
-        PositionInfo memory position = positionInfoById[tokenId];
-        if (position.newId != 0 && position.newId != tokenId) {
-            return getActivePosition(position.newId);
+    function getActivePosition(uint256 id) public view returns (uint256) {
+        PositionInfo memory trailing = positionInfoById[id];
+        if (trailing.newId != 0 && trailing.newId != id) {
+            return getActivePosition(trailing.newId);
         }
-
-        return tokenId;
+        return id;
     }
 
     function getTickLower(int24 tick, int24 tickSpacing) private pure returns (int24) {
@@ -579,7 +584,7 @@ contract PerpsHook is BaseHook, ERC6909 {
         emit RewardAccrued(positionId, reward);
     }
 
-    function accrueAndEmitRewards(uint256[] memory positions) internal {
+    function accrueAndEmitRewards(uint256[] memory positions) private {
         for (uint256 i = 0; i < positions.length; i++) {
             uint256 positionId = positions[i];
 
@@ -594,7 +599,7 @@ contract PerpsHook is BaseHook, ERC6909 {
     }
 
     function fillStopLoss(PoolKey calldata poolKey, int24 triggerTick, bool zeroForOne, uint256 swapAmount) internal {
-        PoolId id = poolKey.toId();
+        PoolId poolId = poolKey.toId();
 
         IPoolManager.SwapParams memory stopLossSwapParams = IPoolManager.SwapParams({
             zeroForOne: zeroForOne,
@@ -608,29 +613,31 @@ contract PerpsHook is BaseHook, ERC6909 {
         // this amount was positive or they would have been reverted
         uint256 amount = zeroForOne ? uint256(int256(delta.amount1())) : uint256(int256(delta.amount0()));
 
-        uint256[] memory positionByIds = positionByTicksId[id][triggerTick][zeroForOne];
+        uint256[] memory trailingIds = positionByTicksId[poolId][triggerTick][zeroForOne];
 
-        for (uint256 i = 0; i < positionByIds.length; i++) {
-            uint256 positionById = positionByIds[i];
-            PositionInfo storage position = positionInfoById[positionById];
-            uint256 filledAmount = amount.mulDivDown(position.totalAmount, swapAmount);
-            position.filledAmount += filledAmount;
+        for (uint256 i = 0; i < trailingIds.length; i++) {
+            uint256 trailingId = trailingIds[i];
+            PositionInfo storage trailing = positionInfoById[trailingId];
+            // filled amount = amount out * balance trailing / amount in
+            uint256 filledAmount = amount.mulDivDown(trailing.totalAmount, swapAmount);
+            trailing.filledAmount += amount;
 
-            // delete the trailing position from active positions
-            uint256[] storage activePositions = positionByPercentId[id][position.percent][position.zeroForOne];
+            // delete this trailing from list of active trailings
+            uint256[] storage trailingActives = positionByPercentId[poolId][trailing.percent][zeroForOne];
 
-            for (uint256 j = 0; j < activePositions.length; j++) {
-                if (activePositions[j] == positionById) {
-                    activePositions[j] = activePositions[activePositions.length - 1];
+            // remove this position once is fullfilled
+            for (uint256 j = 0; j < trailingActives.length; j++) {
+                if (trailingActives[j] == trailingId) {
+                    trailingActives[j] = trailingActives[trailingActives.length - 1];
                     break;
                 }
             }
-            activePositions.pop();
+            trailingActives.pop();
         }
 
         // delete the position from the tick
-        delete positionByTicksId[id][triggerTick][zeroForOne];
-        delete positionIds[id][triggerTick][zeroForOne];
+        delete positionByTicksId[poolId][triggerTick][zeroForOne];
+        delete lastPositionId[poolId][triggerTick][zeroForOne];
     }
 
     /**
@@ -684,39 +691,38 @@ contract PerpsHook is BaseHook, ERC6909 {
      * @param newTick The new tick
      */
     function rebalancePosition(PoolId id, int24 lastTick, int24 newTick) private {
-        bool zeroForOne = lastTick < newTick;
+        bool zeroForOne = newTick > lastTick;
 
         for (uint256 i = 1; i < 10; ++i) {
             uint24 percent = uint24(i) * 10_000;
-            uint256[] memory activePositions = positionByPercentId[id][percent][zeroForOne];
+            uint256[] memory activeTrailings = positionByPercentId[id][percent][zeroForOne];
 
-            for (uint256 j = 0; j < activePositions.length; j++) {
+            for (uint256 j = 0; j < activeTrailings.length; j++) {
                 // calculate tick lower by percent
                 // calculate tickLower based on percent trailing stop, 1% price movement equal 100 ticks change
                 int24 tickChange = ((100 * int24(percent)) / 10_000);
                 // change direction depend if it's zeroForOne
                 int24 tickLower = zeroForOne ? newTick - tickChange : newTick + tickChange;
-                uint256 positionId_ = activePositions[j];
-                PositionInfo storage position = positionInfoById[positionId_];
-                int24 oldTick = position.tickLower;
+                uint256 trailingId = activeTrailings[j];
+                PositionInfo storage trailing = positionInfoById[trailingId];
+                int24 oldTick = trailing.tickLower;
                 // move amount from position
-                positionIds[id][oldTick][zeroForOne] -= position.totalAmount;
-                positionIds[id][tickLower][zeroForOne] += position.totalAmount;
-
+                lastPositionId[id][oldTick][zeroForOne] -= trailing.totalAmount;
+                lastPositionId[id][tickLower][zeroForOne] += trailing.totalAmount;
                 // update trailing by tick id
-                deleteFromTicks(positionId_, id, oldTick, zeroForOne);
+                deleteFromTicks(trailingId, id, oldTick, zeroForOne);
 
                 // try and merge it
-                uint256 mergeId = mergePosition(id, percent, zeroForOne, position.totalAmount, tickLower, positionId_);
+                uint256 mergeId = mergePosition(id, percent, zeroForOne, trailing.totalAmount, tickLower, trailingId);
 
                 if (mergeId == 0) {
                     // if it's not merged, add it to the new tick
-                    positionByTicksId[id][tickLower][zeroForOne].push(positionId_);
-                    position.tickLower = tickLower;
+                    positionByTicksId[id][tickLower][zeroForOne].push(trailingId);
+                    trailing.tickLower = tickLower;
                 } else {
-                    position.newId = mergeId;
+                    trailing.newId = mergeId;
                     // delete from active if the position is merged
-                    deleteFromActive(positionId_, id, percent, zeroForOne);
+                    deleteFromActive(trailingId, id, percent, zeroForOne);
                 }
             }
         }
@@ -736,15 +742,15 @@ contract PerpsHook is BaseHook, ERC6909 {
         int24 newTick,
         uint256 positionId
     ) private returns (uint256) {
-        uint256[] storage activePositions = positionByPercentId[poolId][percent][zeroForOne];
+        uint256[] storage trailingActives = positionByPercentId[poolId][percent][zeroForOne];
 
-        for (uint256 i = 0; i < activePositions.length; i++) {
-            uint256 id = activePositions[i];
+        for (uint256 i = 0; i < trailingActives.length; i++) {
+            uint256 id = trailingActives[i];
             if (positionId != id) {
-                PositionInfo storage position = positionInfoById[id];
-                if (position.tickLower == newTick) {
-                    // merge the position
-                    position.totalAmount += amount;
+                PositionInfo storage trailing = positionInfoById[id];
+                if (trailing.tickLower == newTick) {
+                    // merge amount of the trailings
+                    trailing.totalAmount += amount;
                     return id;
                 }
             }
@@ -758,35 +764,33 @@ contract PerpsHook is BaseHook, ERC6909 {
     {
         delta = poolManager.swap(key, params, ZERO_BYTES);
 
-        Currency token = params.zeroForOne ? key.currency0 : key.currency1;
+        // Currency token = params.zeroForOne ? key.currency0 : key.currency1;
 
         // return delta
 
         if (params.zeroForOne) {
             if (delta.amount0() < 0) {
-                if (token.isAddressZero()) {
-                    _settle(token, uint128(-delta.amount0()));
+                if (key.currency0.isAddressZero()) {
+                    _settle(key.currency0, uint128(-delta.amount0()));
                 } else {
-                    _settle(token, uint128(-delta.amount0()));
-                    poolManager.settle();
+                    _settle(key.currency0, uint128(-delta.amount0()));
                 }
             }
 
             if (delta.amount1() > 0) {
-                _take(token, uint128(delta.amount1()));
+                _take(key.currency1, uint128(delta.amount1()));
             }
         } else {
             if (delta.amount1() < 0) {
-                if (token.isAddressZero()) {
-                    _settle(token, uint128(-delta.amount1()));
+                if (key.currency1.isAddressZero()) {
+                    _settle(key.currency1, uint128(-delta.amount1()));
                 } else {
-                    _settle(token, uint128(-delta.amount1()));
-                    poolManager.settle();
+                    _settle(key.currency1, uint128(-delta.amount1()));
                 }
             }
 
             if (delta.amount0() > 0) {
-                _take(token, uint128(delta.amount0()));
+                _take(key.currency0, uint128(delta.amount0()));
             }
         }
     }
