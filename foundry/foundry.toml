@@ -16,7 +16,9 @@ remappings = [
     '@layerzerolabs/lz-evm-protocol-v2/=lib/layerzero-v2/packages/layerzero-v2/evm/protocol',
 ]
 [rpc_endpoints]
+sepolia_key = "${API_KEY_SEPOLIA}"
 ethena_testnet = "https://testnet.rpc.ethena.fi"
+sepolia_testnet ="${API_KEY_SEPOLIA}"
 
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

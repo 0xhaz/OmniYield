@@ -584,6 +584,10 @@ contract PerpsHook is BaseHook, ERC6909 {
         emit RewardAccrued(positionId, reward);
     }
 
+    function getLeveragePosition(uint256 positionId) public view returns (LeveragePosition memory) {
+        return leveragePositionById[positionId];
+    }
+
     function accrueAndEmitRewards(uint256[] memory positions) private {
         for (uint256 i = 0; i < positions.length; i++) {
             uint256 positionId = positions[i];

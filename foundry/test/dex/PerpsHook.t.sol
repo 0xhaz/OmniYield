@@ -17,15 +17,18 @@ import {HookMiner} from "test/utils/HookMiner.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {MockUSDe} from "test/mocks/MockUSDe.sol";
+import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 
 contract PerpsHookTest is Test, Deployers {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
     using StateLibrary for IPoolManager;
+    using FixedPointMathLib for uint256;
 
     address bob = makeAddr("bob");
     address alice = makeAddr("alice");
     address carol = makeAddr("carol");
+    address testnetWallet = 0x6FC5113b55771b884880785042e78521B8b719fa;
 
     address USDe_TOKEN = 0xf805ce4F96e0EdD6f0b6cd4be22B34b92373d696;
     address USDe_OFT_ADAPTER = 0x162cc96D5E528F3E5Ce02EF3847216a917ba55bb;
@@ -39,7 +42,7 @@ contract PerpsHookTest is Test, Deployers {
     PoolId poolId;
 
     function setUp() public {
-        vm.createSelectFork({urlOrAlias: "ethena_testnet"});
+        vm.createSelectFork({urlOrAlias: "sepolia_testnet", blockNumber: 7102945});
         deployFreshManagerAndRouters();
         deployMintAndApprove2Currencies();
 
@@ -62,6 +65,8 @@ contract PerpsHookTest is Test, Deployers {
         // USDe.mint(bob, 1000e18);
         // USDe.mint(alice, 1000e18);
         // USDe.mint(carol, 1000e18);
+        USDe.approve(address(manager), 1000e18);
+        USDe.approve(address(hook), 1000e18);
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
@@ -85,6 +90,9 @@ contract PerpsHookTest is Test, Deployers {
             }),
             ZERO_BYTES
         );
+
+        // uint256 walletBalance = USDe.balanceOf(testnetWallet);
+        // console2.log("Wallet balance: ", walletBalance);
     }
 
     function test_Modify_Liquidity_Hooks() public {
@@ -414,6 +422,55 @@ contract PerpsHookTest is Test, Deployers {
         uint256 balanceAlice = IERC20(token0).balanceOf(alice);
         assertGt(balanceBob, 0.1 ether);
         assertGt(balanceAlice, 0.1 ether);
+    }
+
+    function test_Place_Leverage_Position() public {
+        vm.startPrank(testnetWallet); // Impersonate the testnet wallet
+        vm.assume(USDe.approve(address(hook), 10e18));
+        vm.assume(USDe.allowance(testnetWallet, address(hook)) == 10e18);
+        // vm.assume(USDe.transferFrom(testnetWallet, address(hook), 10e18));
+
+        // Step 1: Deal tokens and validate
+        uint256 dealBalance = 100e18;
+        deal(address(USDe), testnetWallet, dealBalance);
+        uint256 initialBalance = USDe.balanceOf(testnetWallet);
+        console2.log("Initial Balance: ", initialBalance);
+        assertEq(initialBalance, dealBalance, "Balance mismatch after deal");
+
+        // Step 2: Approve tokens and validate
+        uint256 amountToApprove = 10e18; // Margin to approve
+        USDe.approve(address(hook), amountToApprove);
+        uint256 allowance = USDe.allowance(testnetWallet, address(hook));
+        console2.log("Allowance: ", allowance);
+        assertEq(allowance, amountToApprove, "Allowance mismatch");
+
+        // Step 3: Set up leverage parameters
+        uint256 leverage = 5e18; // 5x leverage
+        bool isLong = true; // Long position
+        bool zeroForOne = true; // Trade direction
+
+        // Step 4: Place leverage position
+        console2.log("Placing leverage position...");
+        uint256 positionId = hook.placeLeveragePosition(key, amountToApprove, leverage, isLong, zeroForOne);
+
+        // Step 5: Validate the position
+        (uint256 positionSize, uint256 margin, uint256 entryPrice, uint256 leveragePosition, bool long, IERC20 token) =
+            hook.leveragePositionById(positionId);
+
+        console2.log("Position Size: ", positionSize);
+        console2.log("Margin: ", margin);
+        console2.log("Leverage Position: ", leveragePosition);
+
+        assertEq(positionSize, amountToApprove.mulDivDown(leverage, 1e18), "Position size mismatch");
+        assertEq(margin, amountToApprove, "Margin mismatch");
+        assertEq(leveragePosition, leverage, "Leverage mismatch");
+        assertEq(long, isLong, "Position type mismatch");
+        assertEq(address(token), address(USDe), "Collateral token mismatch");
+
+        // Step 6: Ensure USDe balance is reduced
+        uint256 finalBalance = USDe.balanceOf(testnetWallet);
+        console2.log("Final Balance: ", finalBalance);
+        assertEq(finalBalance, initialBalance - amountToApprove, "Final balance mismatch");
     }
 
     function getTickLower(int24 tick, int24 tickSpacing) private pure returns (int24) {
