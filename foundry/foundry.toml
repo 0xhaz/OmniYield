@@ -19,6 +19,7 @@ remappings = [
 sepolia_key = "${API_KEY_SEPOLIA}"
 ethena_testnet = "https://testnet.rpc.ethena.fi"
 sepolia_testnet ="${API_KEY_SEPOLIA}"
+ble = "https://testnet.rpc.ethena.fi"
 
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
